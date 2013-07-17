@@ -1,0 +1,61 @@
+//Objek pagar
+void pagar(void)
+{
+    //Pagar Atas
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(-26.0f, 2.0f, 0.0f);
+     glScaled(297.0, 1.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+    //Pagar Bawah
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(-26.0f, 1.05f, 0.0f);
+     glScaled(297.0, 1.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+    //Pagar Tegak
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(1.0f, 0.0f, 0.0f);
+     glScaled(1.5, 10.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(26.0f, 0.0f, 0.0f);
+     glScaled(1.5, 10.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(47.8f, 0.0f, 0.0f);
+     glScaled(1.5, 10.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(-26.0f, 0.0f, 0.0f);
+     glScaled(1.5, 10.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(-51.0f, 0.0f, 0.0f);
+     glScaled(1.5, 10.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(-76.0f, 0.0f, 0.0f);
+     glScaled(1.5, 10.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+    glPushMatrix();
+	 glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+     glTranslatef(-100.0f, 0.0f, 0.0f);
+     glScaled(1.5, 10.0 , 0.5);
+     glutSolidCube(0.5f);
+    glPopMatrix();
+}
