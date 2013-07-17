@@ -1,0 +1,912 @@
+#pragma once
+
+#ifndef _WIN32_WINNT  	// Allow use of features specific to Windows XP or later.
+#define _WIN32_WINNT 0x0501	// Change this to the appropriate value to target other versions of Windows.
+#endif
+
+#include <stdio.h>
+#include <tchar.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <windows.h>
+#ifdef __APPLE__
+#include <OpenGL/OpenGL.h>
+#include <GLUT/glut.h>
+#else
+#include <GL/glut.h>
+#include <GL/glu.h>
+#include <GL/gl.h>
+#include "imageloader.h"
+#include "vec3f.h"
+#endif
+
+float angle = 0;
+float sudutk = 30.0f;
+using namespace std;
+
+float lastx, lasty;
+GLint stencilBits;
+static int viewx = 50;
+static int viewy = 24;
+static int viewz = 80;
+int a=0, b=0, c=0, d=0;
+float rot = 0;
+
+
+//train 2D
+//class untuk terain 2D
+class Terrain {
+private:
+	int w; //Width
+	int l; //Length
+	float** hs; //Heights
+	Vec3f** normals;
+	bool computedNormals; //Whether normals is up-to-date
+public:
+	Terrain(int w2, int l2) {
+		w = w2;
+		l = l2;
+
+		hs = new float*[l];
+		for (int i = 0; i < l; i++) {
+			hs[i] = new float[w];
+		}
+
+		normals = new Vec3f*[l];
+		for (int i = 0; i < l; i++) {
+			normals[i] = new Vec3f[w];
+		}
+
+		computedNormals = false;
+	}
+
+	~Terrain() {
+		for (int i = 0; i < l; i++) {
+			delete[] hs[i];
+		}
+		delete[] hs;
+
+		for (int i = 0; i < l; i++) {
+			delete[] normals[i];
+		}
+		delete[] normals;
+	}
+
+	int width() {
+		return w;
+	}
+
+	int length() {
+		return l;
+	}
+
+	//Sets the height at (x, z) to y
+	void setHeight(int x, int z, float y) {
+		hs[z][x] = y;
+		computedNormals = false;
+	}
+
+	//Returns the height at (x, z)
+	float getHeight(int x, int z) {
+		return hs[z][x];
+	}
+
+	//Computes the normals, if they haven't been computed yet
+	void computeNormals() {
+		if (computedNormals) {
+			return;
+		}
+
+		//Compute the rough version of the normals
+		Vec3f** normals2 = new Vec3f*[l];
+		for (int i = 0; i < l; i++) {
+			normals2[i] = new Vec3f[w];
+		}
+
+		for (int z = 0; z < l; z++) {
+			for (int x = 0; x < w; x++) {
+				Vec3f sum(0.0f, 0.0f, 0.0f);
+
+				Vec3f out;
+				if (z > 0) {
+					out = Vec3f(0.0f, hs[z - 1][x] - hs[z][x], -1.0f);
+				}
+				Vec3f in;
+				if (z < l - 1) {
+					in = Vec3f(0.0f, hs[z + 1][x] - hs[z][x], 1.0f);
+				}
+				Vec3f left;
+				if (x > 0) {
+					left = Vec3f(-1.0f, hs[z][x - 1] - hs[z][x], 0.0f);
+				}
+				Vec3f right;
+				if (x < w - 1) {
+					right = Vec3f(1.0f, hs[z][x + 1] - hs[z][x], 0.0f);
+				}
+
+				if (x > 0 && z > 0) {
+					sum += out.cross(left).normalize();
+				}
+				if (x > 0 && z < l - 1) {
+					sum += left.cross(in).normalize();
+				}
+				if (x < w - 1 && z < l - 1) {
+					sum += in.cross(right).normalize();
+				}
+				if (x < w - 1 && z > 0) {
+					sum += right.cross(out).normalize();
+				}
+
+				normals2[z][x] = sum;
+			}
+		}
+
+		//Smooth out the normals
+		const float FALLOUT_RATIO = 0.5f;
+		for (int z = 0; z < l; z++) {
+			for (int x = 0; x < w; x++) {
+				Vec3f sum = normals2[z][x];
+
+				if (x > 0) {
+					sum += normals2[z][x - 1] * FALLOUT_RATIO;
+				}
+				if (x < w - 1) {
+					sum += normals2[z][x + 1] * FALLOUT_RATIO;
+				}
+				if (z > 0) {
+					sum += normals2[z - 1][x] * FALLOUT_RATIO;
+				}
+				if (z < l - 1) {
+					sum += normals2[z + 1][x] * FALLOUT_RATIO;
+				}
+
+				if (sum.magnitude() == 0) {
+					sum = Vec3f(0.0f, 1.0f, 0.0f);
+				}
+				normals[z][x] = sum;
+			}
+		}
+
+		for (int i = 0; i < l; i++) {
+			delete[] normals2[i];
+		}
+		delete[] normals2;
+
+		computedNormals = true;
+	}
+
+	//Returns the normal at (x, z)
+	Vec3f getNormal(int x, int z) {
+		if (!computedNormals) {
+			computeNormals();
+		}
+		return normals[z][x];
+	}
+};
+//end class
+
+
+void initRendering() {
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_COLOR_MATERIAL);
+	glEnable(GL_LIGHTING);
+	glEnable(GL_LIGHT0);
+	glEnable(GL_NORMALIZE);
+	glShadeModel(GL_SMOOTH);
+}
+
+//Loads a terrain from a heightmap.  The heights of the terrain range from
+//-height / 2 to height / 2.
+//load terain di procedure inisialisasi
+Terrain* loadTerrain(const char* filename, float height) {
+	Image* image = loadBMP(filename);
+	Terrain* t = new Terrain(image->width, image->height);
+	for (int y = 0; y < image->height; y++) {
+		for (int x = 0; x < image->width; x++) {
+			unsigned char color = (unsigned char) image->pixels[3 * (y
+					* image->width + x)];
+			float h = height * ((color / 255.0f) - 0.5f);
+			t->setHeight(x, y, h);
+		}
+	}
+
+	delete image;
+	t->computeNormals();
+	return t;
+}
+
+float _angle = 60.0f;
+//buat tipe data terain
+Terrain* _terrain;
+Terrain* _terrainTanah;
+Terrain* _terrainAir;
+
+const GLfloat light_ambient[] = { 0.3f, 0.3f, 0.3f, 1.0f };
+const GLfloat light_diffuse[] = { 0.7f, 0.7f, 0.7f, 1.0f };
+const GLfloat light_specular[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+const GLfloat light_position[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+const GLfloat light_ambient2[] = { 0.3f, 0.3f, 0.3f, 0.0f };
+const GLfloat light_diffuse2[] = { 0.3f, 0.3f, 0.3f, 0.0f };
+
+const GLfloat mat_ambient[] = { 0.8f, 0.8f, 0.8f, 1.0f };
+const GLfloat mat_diffuse[] = { 0.8f, 0.8f, 0.8f, 1.0f };
+const GLfloat mat_specular[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+const GLfloat high_shininess[] = { 100.0f };
+
+void cleanup() {
+	delete _terrain;
+	delete _terrainTanah;
+}
+
+//untuk di display
+void drawSceneTanah(Terrain *terrain, GLfloat r, GLfloat g, GLfloat b) {
+
+	float scale = 150.0f / max(terrain->width() - 1, terrain->length() - 1);
+	glScalef(scale, scale, scale);
+	glTranslatef(-(float) (terrain->width() - 1) / 2, 0.0f,
+			-(float) (terrain->length() - 1) / 2);
+
+	glColor3f(r, g, b);
+	for (int z = 0; z < terrain->length() - 1; z++) {
+		//Makes OpenGL draw a triangle at every three consecutive vertices
+		glBegin(GL_TRIANGLE_STRIP);
+		for (int x = 0; x < terrain->width(); x++) {
+			Vec3f normal = terrain->getNormal(x, z);
+			glNormal3f(normal[0], normal[1], normal[2]);
+			glVertex3f(x, terrain->getHeight(x, z), z);
+			normal = terrain->getNormal(x, z + 1);
+			glNormal3f(normal[0], normal[1], normal[2]);
+			glVertex3f(x, terrain->getHeight(x, z + 1), z + 1);
+		}
+		glEnd();
+	}
+
+}
+
+//MARKA JALAN
+void marka()
+{
+    glPushMatrix();
+	glColor3f(1.0f, 1.0f, 1.0f);
+    glScaled(10.5, 0.1 , 2.5);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+}
+//LAMPU
+void lampuJalan()
+{
+   //Tiang Tegak
+	glPushMatrix();
+	glColor3f(0.5, 0.5, 0.5);
+	glScalef(0.04,1.5,0.05);
+	glutSolidCube(7.0f);
+	glPopMatrix();
+
+	//Lampu
+	glPushMatrix();
+	glTranslatef(0.0, 4.7, -0.5);
+	glColor3f(1, 1, 1);
+	glScalef(0.8,0.8,1.5);
+	glutSolidSphere(0.5,70,20);
+	glPopMatrix();
+
+}
+
+void lampuJalan2()
+{
+   //Tiang Tegak
+	glPushMatrix();
+	glColor3f(0.5, 0.5, 0.5);
+	glScalef(0.04,1.7,0.05);
+	glutSolidCube(7.0f);
+	glPopMatrix();
+
+    //Tiang Atas
+	glPushMatrix();
+	glColor3f(0.5f, 0.5f, 0.5f);
+	glTranslatef(0.0,5.3,2.0);
+    glScaled(1.5, 1.0 , 7.5);
+    glutSolidCube(0.5f);
+	glPopMatrix();
+
+	//Lampu
+	glPushMatrix();
+	glTranslatef(0.0, 4.7, 3.7);
+	glColor3f(1, 1, 1);
+	glScalef(0.8,0.8,1.5);
+	glutSolidSphere(0.5,70,20);
+	glPopMatrix();
+
+}
+
+
+//PAGAR
+void pagar1()
+{
+    //Pagar Atas
+    glPushMatrix();
+	glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+    glTranslatef(-73.0f, 0.0f, -4.0f);
+    glScaled(50.0, 1.0 , 2.5);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Pagar Bawah
+    glPushMatrix();
+	glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+    glTranslatef(-73.0f, 1.05f, -4.0f);
+    glScaled(50.0, 1.0 , 2.5);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Pagar Tegak
+
+
+    glPushMatrix();
+	glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+    glTranslatef(-76.0f, 0.0f, -4.0f);
+    glScaled(6.5, 5.0 , 4.5);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+}
+
+//PAGAR
+void pagar2()
+{
+    //Pagar Atas
+    glPushMatrix();
+	glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+    glTranslatef(-73.0f, 0.0f, -20.0f);
+    glScaled(50.0, 1.0 , 2.5);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Pagar Bawah
+    glPushMatrix();
+	glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+    glTranslatef(-73.0f, 1.05f, -20.0f);
+    glScaled(50.0, 1.0 , 2.5);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Pagar Tegak
+
+
+    glPushMatrix();
+	glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+    glTranslatef(-76.0f, 0.0f, -20.0f);
+    glScaled(6.5, 5.0 , 4.5);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+}
+
+//LANTAI BANGUNAN
+void bangunan()
+{
+    //Dasar
+    glPushMatrix();
+	glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+    glTranslatef(-15.0, 0.0, 0.0);
+	glScalef(5.0,0.02,4.5);
+	glutSolidCube(9.0f);
+    glPopMatrix();
+
+    //Dasar2
+    glPushMatrix();
+    glColor3f(0.0, 0.0, 0.0);
+    glTranslatef(-15.0, 0.0, 28.5);
+    glScalef(3.8,0.02,1.9);
+	glutSolidCube(9.0f);
+    glPopMatrix();
+
+    //Trotoar kanan
+    glPushMatrix();
+    glColor3f(0.5, 0.5, 0.5);
+    glTranslatef(2.0, 0.0, 28.5);
+    glScalef(0.05,0.2,1.9);
+	glutSolidCube(9.0f);
+    glPopMatrix();
+    //Trotoar Kiri
+    glPushMatrix();
+    glColor3f(0.5, 0.5, 0.5);
+    glTranslatef(-32.0, 0.0, 28.5);
+    glScalef(0.05,0.2,1.9);
+	glutSolidCube(9.0f);
+    glPopMatrix();
+
+}
+
+//POHON
+void pohon()
+{
+    //Batang Cemara
+    glPushMatrix();
+	glColor3f(0.8f, 0.4f, 0.1f);
+    glScaled(1.1,7,1);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Daun Bawah
+    glPushMatrix();
+    glColor3f(0.5f, 0.7f, 0.1f);
+    glTranslatef(0.0f, 1.5f, 0.0f);
+    glRotatef(230, 1.5, 2, 2);
+	glScaled(2,2,3);
+	glutSolidCone(1.6,1,20,30);
+	glPopMatrix();
+
+    //Daun Tengah
+    glPushMatrix();
+    glColor3f(0.5f, 0.7f, 0.1f);
+    glTranslatef(0.0f, 3.0f, 0.0f);
+    glRotatef(230, 1.5, 2, 2);
+	glScaled(2,2,3);
+	glutSolidCone(1.3,1,20,30);
+	glPopMatrix();
+
+	//Daun Atas
+    glPushMatrix();
+    glColor3f(0.5f, 0.7f, 0.1f);
+    glTranslatef(0.0f, 4.5f, 0.0f);
+    glRotatef(230, 1.5, 2, 2);
+	glScaled(2,2,3);
+	glutSolidCone(1.0,1,20,30);
+	glPopMatrix();
+
+}
+
+//POHON TAMAN
+void pohontaman()
+{
+    //Batang Pohon Tengah
+    glPushMatrix();
+	glColor3f(0.5f, 0.5f, 0.5f);
+	glTranslatef(0.0, 1.9, 0.0);
+    glScaled(0.3 , 7.5, 0.3);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+    //Lantai
+    glPushMatrix();
+    glColor3f(1.0, 1.0, 1.0);
+    //glTranslatef(0.0, 3.6, 0.0);
+    glScaled(0.7, 0.09, 0.7);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+    //Batang Pohon Kiri
+    glPushMatrix();
+	glColor3f(0.0f, 1.0f, 0.0f);
+	glTranslatef(0.0, 3.6, 0.0);
+	glRotatef(45, 0.0, 0.0, 2.0);
+    glScaled(0.15 ,5 ,0.15);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Batang Pohon Kanan
+    glPushMatrix();
+	glColor3f(0.8f, 0.8f, 0.0f);
+	glTranslatef(0.0, 3.6, 0.0);
+	glRotatef(45, 0.0, 0.0, -2.0);
+    glScaled(0.15 ,5 ,0.15);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Batang Pohon Depan
+    glPushMatrix();
+	glColor3f(1.0f, 0.0f, 0.0f);
+	glTranslatef(0.0, 3.6, 0.0);
+	glRotatef(45, 2.0, 0.0, 0.0);
+    glScaled(0.15 ,5 ,0.15);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Batang Pohon Belakang
+    glPushMatrix();
+	glColor3f(0.0f, 0.0f, 1.0f);
+	glTranslatef(0.0, 3.6, 0.0);
+	glRotatef(45, -2.0, 0.0, 0.0);
+    glScaled(0.15 ,5 ,0.15);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Batang Pohon Lurus
+    glPushMatrix();
+	glColor3f(0.0f, 0.4f, 0.4f);
+	glTranslatef(0.0, 3.6, 0.0);
+	glRotatef(90, -2.0, 0.0, 0.0);
+    glScaled(0.15 ,5 ,0.15);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+
+    //Batang Pohon Lurus
+    glPushMatrix();
+	glColor3f(0.8f, 0.0f, 0.8f);
+	glTranslatef(0.0, 3.6, 0.0);
+	glRotatef(90, 0.0, 0.0, 2.0);
+    glScaled(0.15 ,5 ,0.15);
+    glutSolidCube(0.5f);
+    glPopMatrix();
+}
+
+//BANGKU TAMAN
+void bangkutaman1()
+{
+    //bangku taman depan
+    glPushMatrix();
+    glTranslatef(-11.5, 0.0, 2.0);
+    glColor3f(0.8f, 0.4f, 0.1f);
+    glScalef(7.3, 1.5, 2.3);
+    glutSolidCube(1.0f);
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(-11.5, 1.0, 3.2);
+    glColor3f(0.8f, 0.4f, 0.1f);
+    glScalef(7.3, 1.5, 0.3);
+    glutSolidCube(1.0f);
+    glPopMatrix();
+}
+
+void bangkutaman2()
+{
+    //bangku taman belakang
+    glPushMatrix();
+    glTranslatef(-11.5, 0.0, -2.0);
+    glColor3f(0.8f, 0.4f, 0.1f);
+    glScalef(7.3, 1.5, 2.3);
+    glutSolidCube(1.0f);
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(-11.5, 1.0, -3.2);
+    glColor3f(0.8f, 0.4f, 0.1f);
+    //glRotatef(-8.5f, 1.0f, 0.0f, 0.0f);
+    glScalef(7.3, 1.5, 0.3);
+    glutSolidCube(1.0f);
+    glPopMatrix();
+}
+
+void bangkutaman3()
+{
+    //bangku taman belakang
+    glPushMatrix();
+    glTranslatef(-11.5, 0.0, -0.0);
+    glColor3f(0.8f, 0.4f, 0.1f);
+    glScalef(2.3, 1.5, 7.3);
+    glutSolidCube(1.0f);
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(-10.5, 1.0, -0.0);
+    glColor3f(0.8f, 0.4f, 0.1f);
+    glScalef(0.3, 1.5, 7.3);
+    glutSolidCube(1.0f);
+    glPopMatrix();
+}
+
+void bangkutaman4()
+{
+    //bangku taman belakang
+    glPushMatrix();
+    glTranslatef(-11.5, 0.0, -0.0);
+    glColor3f(0.8f, 0.4f, 0.1f);
+    glScalef(2.3, 1.5, 7.3);
+    glutSolidCube(1.0f);
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(-12.5, 1.0, -0.0);
+    glColor3f(0.8f, 0.4f, 0.1f);
+    glScalef(0.3, 1.5, 7.3);
+    glutSolidCube(1.0f);
+    glPopMatrix();
+}
+
+//JALUR TAMAN
+void jalur()
+{
+//----------------------------------------//
+    glPushMatrix();
+    glTranslatef(20.4, .0, -50.0);
+
+    //Dasar2
+    glPushMatrix();
+    glColor3f(0.0, 0.0, 0.0);
+    glTranslatef(0.0, 0.0, 24.5);
+    glScalef(8.6, 0.02, 0.9);
+	glutSolidCube(9.0f);
+    glPopMatrix();
+    //Trotoar kanan
+    glPushMatrix();
+    glColor3f(0.5, 0.5, 0.5);
+    glTranslatef(0.0, 0.0, 20.0);
+    glScalef(8.6,0.1, 0.05);
+	glutSolidCube(9.0f);
+    glPopMatrix();
+    //Trotoar Kiri
+    glPushMatrix();
+    glColor3f(0.5, 0.5, 0.5);
+    glTranslatef(0.0, 0.0, 28.7);
+    glScalef(8.6,0.1, 0.05);
+	glutSolidCube(9.0f);
+    glPopMatrix();
+
+    glPopMatrix();
+//----------------------------//
+
+//Jalur Jembatan
+    glPushMatrix();
+    glColor3f(0.0, 0.0, 0.0);
+    glTranslatef(31.0, 1.0, 69.5);
+    glScalef(1.8, 0.02, 3.0);
+	glutSolidCube(9.0f);
+    glPopMatrix();
+}
+
+
+
+
+unsigned int LoadTextureFromBmpFile(char *filename);
+
+void display(void) {
+	glClearStencil(0); //clear the stencil buffer
+	glClearDepth(1.0f);
+	glClearColor(0.0, 0.6, 0.8, 1);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT); //clear the buffers
+	glLoadIdentity();
+	gluLookAt(viewx-110, viewy+20, viewz+20, 0.0, 10.0, 5.0, 0.0, 1.0, 0.0);
+
+	glPushMatrix();
+
+	//glBindTexture(GL_TEXTURE_3D, texture[0]);
+	drawSceneTanah(_terrain, 0.0f, 0.5f, 0.0f);
+	glPopMatrix();
+
+	glPushMatrix();
+
+	//glBindTexture(GL_TEXTURE_3D, texture[0]);
+	drawSceneTanah(_terrainTanah, 0.0f, 0.0f, 0.0f);
+	glPopMatrix();
+
+	glPushMatrix();
+
+	//glBindTexture(GL_TEXTURE_3D, texture[0]);
+	drawSceneTanah(_terrainAir, 0.0f, 0.2f, 0.5f);
+	glPopMatrix();
+
+//=========================================================================================//
+//====================================MULAI OBJEK===========================================//
+//=========================================================================================//
+
+
+//LAMPU JEMBATAN 2
+        glPushMatrix();
+        glTranslatef(-3.5, 5, 50);
+        lampuJalan();
+        glPopMatrix();
+//LAMPU JEMBATAN 1
+        glPushMatrix();
+        glTranslatef(9, 5, 50);
+        lampuJalan();
+        glPopMatrix();
+
+
+//BANGUNAN
+    glPushMatrix();
+    glTranslatef(18.0,-0.5,-25.0);
+    bangunan();
+    glPopMatrix();
+
+//JALUR TAMAN
+    glPushMatrix();
+    glTranslatef(-28.0,-0.5,-25.0);
+    jalur();
+    glPopMatrix();
+
+//POHON
+for (int i = -4; i < -1; i++)
+        {
+            glPushMatrix();
+            glTranslatef(i*15, 1, 30);
+            pohon();
+            glPopMatrix();
+        }
+    glPushMatrix();
+    glTranslatef(75.0,1,54.0);
+    pohon();
+    glPopMatrix();
+
+    //Pohon belakang
+    glPushMatrix();
+    glTranslatef(65.0,7,-35.0);
+    pohon();
+    glPopMatrix();
+
+    //Pohon Pinggir
+    glPushMatrix();
+    glTranslatef(-50, 1.2, -45);
+    pohon();
+    glPopMatrix();
+
+    //Pohon Pinggir
+    glPushMatrix();
+    glTranslatef(-55, 1.2, -15);
+    pohon();
+    glPopMatrix();
+
+    //Pohon Pinggir
+    glPushMatrix();
+    glTranslatef(-62, 1.2, 1.7);
+    pohon();
+    glPopMatrix();
+
+//Bangku Taman kanan depan
+   glPushMatrix();
+   glScalef(0.5f,0.5f,0.5f);
+   glTranslatef(48.0,0.1,2.8);
+   bangkutaman3();
+   glPopMatrix();
+
+//Bangku Taman kanan depan
+   glPushMatrix();
+   glScalef(0.5f,0.5f,0.5f);
+   glTranslatef(48.0,0.1,14.8);
+   bangkutaman3();
+   glPopMatrix();
+
+
+//Bangku Taman kiri belakang
+   glPushMatrix();
+   glScalef(0.5f,0.5f,0.5f);
+   glTranslatef(-13.0,0.1,2.8);
+   bangkutaman4();
+   glPopMatrix();
+
+//Bangku Taman kiri belakang
+   glPushMatrix();
+   glScalef(0.5f,0.5f,0.5f);
+   glTranslatef(-13.0,0.1,14.8);
+   bangkutaman4();
+   glPopMatrix();
+
+//MARKA JALAN
+    for (int i = -3; i < 4; i++)
+        {
+            glPushMatrix();
+            glTranslatef(i*22, 0.0, 20);
+            marka();
+            glPopMatrix();
+        }
+
+//PAGAR
+        glPushMatrix();
+        glRotated(90,0,90,0);
+        glTranslatef(27, 0.0, 15);
+        pagar1();
+        pagar2();
+        glPopMatrix();
+
+
+	glutSwapBuffers();
+	glFlush();
+	rot++;
+	angle++;
+
+}
+
+void init(void) {
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_LIGHTING);
+	glEnable(GL_LIGHT0);
+	glDepthFunc(GL_LESS);
+	glEnable(GL_NORMALIZE);
+	glEnable(GL_COLOR_MATERIAL);
+	glDepthFunc(GL_LEQUAL);
+	glShadeModel(GL_SMOOTH);
+	glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+	glEnable(GL_CULL_FACE);
+
+	_terrain = loadTerrain("Terrain.bmp", 20);
+	_terrainTanah = loadTerrain("Jalan.bmp", 20);
+	_terrainAir = loadTerrain("heightmapAir.bmp", 20);
+
+	//binding texture
+
+}
+
+static void kibor(int key, int x, int y) {
+	switch (key) {
+	case GLUT_KEY_HOME:
+		viewy++;
+		break;
+	case GLUT_KEY_END:
+		viewy--;
+		break;
+	case GLUT_KEY_UP:
+		viewz--;
+		break;
+	case GLUT_KEY_DOWN:
+		viewz++;
+		break;
+
+	case GLUT_KEY_RIGHT:
+		viewx++;
+		break;
+	case GLUT_KEY_LEFT:
+		viewx--;
+		break;
+
+	default:
+		break;
+	}
+}
+
+void newkeyboard(unsigned char key, int x, int y) {
+
+	if (key == 'q') {
+		viewz++;
+	}
+	if (key == 'e') {
+		viewz--;
+	}
+	if (key == 's') {
+		viewy--;
+	}
+	if (key == 'w') {
+		viewy++;
+	}
+//UNTUK BUS
+    if  (key == 'm'){
+        a+=-1;
+    d+=1;
+    b=0;
+    c=0;
+      }
+      else if (key=='n'){
+           d+=-1;
+  a+=1;
+  b=0;
+  c=0;
+    }
+    if  (key == 27){ //ESC
+        exit(0);
+    }
+}
+
+void reshape(int w, int h) {
+	glViewport(0, 0, (GLsizei) w, (GLsizei) h);
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	gluPerspective(60, (GLfloat) w / (GLfloat) h, 0.1, 1000.0);
+	glMatrixMode(GL_MODELVIEW);
+}
+
+int main(int argc, char **argv) {
+	glutInit(&argc, argv);
+	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_STENCIL | GLUT_DEPTH); //add a stencil buffer to the window
+	glutInitWindowSize(800, 600);
+	glutInitWindowPosition(100, 100);
+	glutCreateWindow("Tugas Besar Grafkom- Jam Gadang");
+	init();
+	initRendering();
+
+	glutDisplayFunc(display);
+	glutIdleFunc(display);
+	glutReshapeFunc(reshape);
+	glutSpecialFunc(kibor);
+
+	glutKeyboardFunc(newkeyboard);
+
+	glLightfv(GL_LIGHT0, GL_SPECULAR, light_specular);
+	glLightfv(GL_LIGHT0, GL_POSITION, light_position);
+
+	glMaterialfv(GL_FRONT, GL_SPECULAR, mat_specular);
+	glMaterialfv(GL_FRONT, GL_SHININESS, high_shininess);
+	glColorMaterial(GL_FRONT, GL_DIFFUSE);
+
+	glutMainLoop();
+	return 0;
+}
